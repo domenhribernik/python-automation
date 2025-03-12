@@ -1,4 +1,6 @@
 import requests
+from datetime import date
+import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
@@ -9,10 +11,12 @@ JIRA_URL = "https://cwcyprus-sales.atlassian.net"
 JIRA_EMAIL = "webadmin@cwcyprus.com"
 with open("JiraToken.txt", "r") as file:
     JIRA_API_TOKEN = file.read().strip()
-    
+
 # Jira Project and API Endpoint
 JIRA_PROJECT_KEY = "SALES"
-JIRA_API_ENDPOINT = f"{JIRA_URL}/rest/api/3/issue"
+TRANSITIONS = {
+    "Follow-up": 45
+}
 
 auth = base64.b64encode(f"{JIRA_EMAIL}:{JIRA_API_TOKEN}".encode()).decode()
 
@@ -34,69 +38,97 @@ def read_google_sheet(client):
     return df
 
 # Function to create an issue in Jira
-def create_jira_issue(summary, issue_type, description, purchase_date, label):
+def create_jira_issues(df):
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
         "Authorization": f"Basic {auth}"
     }
-    
-    # Jira issue payload
-    issue_data = {
-        "fields": {
-            "project": {"key": JIRA_PROJECT_KEY},
-            "summary": summary,
-            "description": {
-                "type": "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type": "paragraph",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": description
-                            }
-                        ]
-                    }
-                ]
-            },
-            "issuetype": {"name": issue_type},
-            "customfield_10015": purchase_date,
-            "labels": [label] if label else []
-        }
+
+    bulk_issue_data = {
+        "issueUpdates": []
     }
 
-    response = requests.post(JIRA_API_ENDPOINT, headers=headers, json=issue_data)
+    for _, row in df.iterrows():
+        summary = row.iloc[0]
+        description = row.iloc[1]
+        purchase_date = row.iloc[2]
+    
+        issue_payload = {
+            "fields": {
+                "project": {"key": JIRA_PROJECT_KEY},
+                "summary": str(summary),
+                "description": {
+                    "type": "doc",
+                    "version": 1,
+                    "content": [
+                        {
+                            "type": "paragraph",
+                            "content": [
+                                {
+                                    "type": "text",
+                                    "text": description
+                                }
+                            ]
+                        }
+                    ]
+                },
+                "issuetype": {"id": 10003}, # Task hardcoded
+                "customfield_10015": str(purchase_date)
+            }
+        }
+
+        bulk_issue_data["issueUpdates"].append(issue_payload)
+    # print(json.dumps(bulk_issue_data, indent=4))
+    response = requests.post(f"{JIRA_URL}/rest/api/3/issue/bulk", headers=headers, json=bulk_issue_data)
     
     if response.status_code == 201:
-        print(f"Issue created: {summary}")
+        print(f"Issues created: {len(bulk_issue_data["issueUpdates"])}")
     else:
         print(f"Failed to create issue: {response.text}")
 
-def test():
+    keys = [issue['key'] for issue in response.json()['issues']]
+    print(keys)
+    return keys
+
+def get_transitions(key):
     headers = {
         "Accept": "application/json",
         "Authorization": f"Basic {auth}"
     }
 
-    response = requests.get(f"{JIRA_URL}/rest/api/3/myself", headers=headers)
+    response = requests.get(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", headers=headers)
 
     if response.status_code == 200:
-        print("Authentication is working!")
-        print(response.json())  # Print user info
+        print(f"Transitions for issue {key}:")
+        print(response.json())
     else:
-        print(f"Failed to authenticate: {response.status_code}")
-        print(response.text)
+        print(f"Failed to get transitions: {response.text}")
+
+
+def transition_to_needs_follow_up(transition, keys):
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Basic {auth}"
+    }
+
+    transition_payload = {
+        "transition": {"id": transition}
+    }
+
+    for key in keys:
+        response = requests.post(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", json=transition_payload, headers=headers)
+
+        if response.status_code == 204:
+            print(f"Issue {key} moved to 'Needs Follow Up'")
+        else:
+            print(f"Failed to transition issue: {response.text}")
 
 def main():
     df = read_google_sheet(authenticate_google_sheets())
-    for _, row in df.iterrows():
-        create_jira_issue(row.iloc[0],  # Summary
-                          row.iloc[1],  # Issue Type
-                          row.iloc[2],  # Description
-                          row.iloc[3],  # Purchase Date
-                          row.iloc[4])  # Labels
+    keys = create_jira_issues(df)
+    transition_to_needs_follow_up(TRANSITIONS.get("Follow-up", 0), keys)
 
 if __name__ == "__main__":
     main()

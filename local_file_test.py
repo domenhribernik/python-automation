@@ -19,7 +19,7 @@ csv_file_path = r"C:\Users\user\Downloads\jira-automation\data.csv"
 df = pd.read_csv(csv_file_path, dtype=str, quotechar='"', skipinitialspace=True)
 
 # Function to create an issue in Jira
-def create_jira_issue(summary, issue_type, description, purchase_date, label):
+def create_jira_issue(summary, description, purchase_date, label):
     headers = {
         "Accept": "application/json",
         "Content-Type": "application/json",
@@ -46,7 +46,7 @@ def create_jira_issue(summary, issue_type, description, purchase_date, label):
                     }
                 ]
             },
-            "issuetype": {"name": issue_type},
+            "issuetype": {"name": "Task"},
             "customfield_10015": purchase_date,
             "labels": [label] if label else []
         }
@@ -59,28 +59,12 @@ def create_jira_issue(summary, issue_type, description, purchase_date, label):
     else:
         print(f"Failed to create issue: {response.text}")
 
-def test():
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Basic {auth}"
-    }
-
-    response = requests.get(f"{JIRA_URL}/rest/api/3/myself", headers=headers)
-
-    if response.status_code == 200:
-        print("Authentication is working!")
-        print(response.json())  # Print user info
-    else:
-        print(f"Failed to authenticate: {response.status_code}")
-        print(response.text)
-
 def main():
     for _, row in df.iterrows():
         create_jira_issue(row.iloc[0],  # Summary
-                          row.iloc[1],  # Issue Type
-                          row.iloc[2],  # Description
-                          row.iloc[3],  # Purchase Date
-                          row.iloc[4])  # Labels
+                          row.iloc[1],  # Description
+                          row.iloc[2],  # Purchase Date
+                          row.iloc[3])  # Labels
 
 if __name__ == "__main__":
     main()
