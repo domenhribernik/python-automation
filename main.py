@@ -25,6 +25,12 @@ GOOGLE_SHEETS_CREDENTIALS_FILE = "credentials.json"
 GOOGLE_SHEET_NAME = "Jira Sales API"
 GOOGLE_SHEET_TAB_NAME = "Sheet1"
 
+HEADERS = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "Authorization": f"Basic {auth}"
+}
+
 def authenticate_google_sheets():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     creds = ServiceAccountCredentials.from_json_keyfile_name(GOOGLE_SHEETS_CREDENTIALS_FILE, scope)
@@ -39,12 +45,6 @@ def read_google_sheet(client):
 
 # Function to create an issue in Jira
 def create_jira_issues(df):
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Basic {auth}"
-    }
-
     bulk_issue_data = {
         "issueUpdates": []
     }
@@ -80,7 +80,7 @@ def create_jira_issues(df):
 
         bulk_issue_data["issueUpdates"].append(issue_payload)
     # print(json.dumps(bulk_issue_data, indent=4))
-    response = requests.post(f"{JIRA_URL}/rest/api/3/issue/bulk", headers=headers, json=bulk_issue_data)
+    response = requests.post(f"{JIRA_URL}/rest/api/3/issue/bulk", headers=HEADERS, json=bulk_issue_data)
     
     if response.status_code == 201:
         print(f"Issues created: {len(bulk_issue_data["issueUpdates"])}")
@@ -92,12 +92,7 @@ def create_jira_issues(df):
     return keys
 
 def get_transitions(key):
-    headers = {
-        "Accept": "application/json",
-        "Authorization": f"Basic {auth}"
-    }
-
-    response = requests.get(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", headers=headers)
+    response = requests.get(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", headers=HEADERS)
 
     if response.status_code == 200:
         print(f"Transitions for issue {key}:")
@@ -107,28 +102,53 @@ def get_transitions(key):
 
 
 def transition_to_needs_follow_up(transition, keys):
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-        "Authorization": f"Basic {auth}"
-    }
-
     transition_payload = {
         "transition": {"id": transition}
     }
 
     for key in keys:
-        response = requests.post(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", json=transition_payload, headers=headers)
+        response = requests.post(f"{JIRA_URL}/rest/api/3/issue/{key}/transitions", json=transition_payload, headers=HEADERS)
 
         if response.status_code == 204:
             print(f"Issue {key} moved to 'Needs Follow Up'")
         else:
             print(f"Failed to transition issue: {response.text}")
 
+def search_issues():
+    params = {
+        "jql": "project = 'SALES' AND status = 'Needs Follow-up'"
+    }
+    response = requests.get(f"{JIRA_URL}/rest/api/2/search/jql", params=params, headers=HEADERS)
+
+    if response.status_code == 200:
+        print(f"Found: {response.json()}")
+        return response.json()["issues"]
+    else:
+        print(f"Failed to search issues: {response.text}")
+
+    return ""
+
+def get_issue(id):
+    response = requests.get(f"{JIRA_URL}/rest/api/3/issue/{id}", headers=HEADERS)
+
+    if response.status_code == 200:
+        print(f"Found issue {id}: {response.json()['fields']['summary']}")
+        return response.json()["fields"]["summary"]
+    else:
+        print(f"Failed to get issue: {response.text}")
+
+    return ""
+
+
 def main():
-    df = read_google_sheet(authenticate_google_sheets())
-    keys = create_jira_issues(df)
-    transition_to_needs_follow_up(TRANSITIONS.get("Follow-up", 0), keys)
+    #print all issues in status 'Needs Follow-up'
+    issues = search_issues()
+    for issue in issues:
+        print(get_issue(issue["id"]))
+    df = read_google_sheet(authenticate_google_sheets()) # read google sheet
+    keys = create_jira_issues(df) # create jira issues in bulk
+    transition_to_needs_follow_up(TRANSITIONS.get("Follow-up", 0), keys) # transition issues to 'Needs Follow-up'
+    
 
 if __name__ == "__main__":
     main()
