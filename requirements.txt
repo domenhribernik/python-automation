@@ -1,0 +1,6 @@
+requests
+datetime
+json
+gspread
+oauth2client
+pandas
