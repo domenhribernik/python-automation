@@ -1,5 +1,5 @@
 import requests
-from datetime import date
+from datetime import date, datetime
 import json
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
@@ -43,6 +43,10 @@ def read_google_sheet(client):
     df = pd.DataFrame(data[1:], columns=data[0])
     return df
 
+def formate_date(date):
+    parsed_date = datetime.strptime(date, "%m/%d/%Y")
+    return parsed_date.strftime("%Y-%m-%d")
+
 # Function to create an issue in Jira
 def create_jira_issues(df):
     bulk_issue_data = {
@@ -50,36 +54,32 @@ def create_jira_issues(df):
     }
 
     for _, row in df.iterrows():
-        summary = row.iloc[0]
-        description = row.iloc[1]
-        purchase_date = row.iloc[2]
+        last_date = formate_date(row['Last Transaction Date'])
+        days_diff = (date.today() - datetime.strptime(last_date, "%Y-%m-%d").date()).days
+        if days_diff < 90:
+            continue
+        print(f"Days since last transaction: {days_diff}")
+
+        summary = row['Customer Name']
+        transaction_amount = row['Last Transaction Amount']
+        email = row['Email']
+        sms = row['SMS']
     
         issue_payload = {
             "fields": {
+                "issuetype": {"id": 10003}, # Task issue hardcoded
                 "project": {"key": JIRA_PROJECT_KEY},
                 "summary": str(summary),
-                "description": {
-                    "type": "doc",
-                    "version": 1,
-                    "content": [
-                        {
-                            "type": "paragraph",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": description
-                                }
-                            ]
-                        }
-                    ]
-                },
-                "issuetype": {"id": 10003}, # Task hardcoded
-                "customfield_10015": str(purchase_date)
+                "customfield_10050": str(last_date),
+                "customfield_10037": float(transaction_amount),
+                "customfield_10039": str(email),
+                "customfield_10049": str(sms),
             }
         }
 
         bulk_issue_data["issueUpdates"].append(issue_payload)
     # print(json.dumps(bulk_issue_data, indent=4))
+
     response = requests.post(f"{JIRA_URL}/rest/api/3/issue/bulk", headers=HEADERS, json=bulk_issue_data)
     
     if response.status_code == 201:
@@ -132,7 +132,7 @@ def get_issue(id):
     response = requests.get(f"{JIRA_URL}/rest/api/3/issue/{id}", headers=HEADERS)
 
     if response.status_code == 200:
-        print(f"Found issue {id}: {response.json()['fields']['summary']}")
+        print(f"Found issue {id}")
         return response.json()["fields"]["summary"]
     else:
         print(f"Failed to get issue: {response.text}")
@@ -141,13 +141,14 @@ def get_issue(id):
 
 
 def main():
+    df = read_google_sheet(authenticate_google_sheets()) # read google sheet
+    keys = create_jira_issues(df) # create jira issues in bulk
+    transition_to_needs_follow_up(TRANSITIONS.get("Follow-up", 0), keys) # transition issues to 'Needs Follow-up'
+
     #print all issues in status 'Needs Follow-up'
     issues = search_issues()
     for issue in issues:
         print(get_issue(issue["id"]))
-    df = read_google_sheet(authenticate_google_sheets()) # read google sheet
-    keys = create_jira_issues(df) # create jira issues in bulk
-    transition_to_needs_follow_up(TRANSITIONS.get("Follow-up", 0), keys) # transition issues to 'Needs Follow-up'
     
 
 if __name__ == "__main__":
